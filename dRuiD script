@@ -1,32 +1,48 @@
-splicing <- read.csv("a csv containing a column named isoform_id.csv")
+file <- read.csv("altSplicing.csv")
+isoformList <- data.frame(isoform_id=file$isoform_id[1:50])
 
-animal_info <- data.frame(Organism=character(), AnimalGeneId=character(), GeneSymbol=character(), GeneName=character(), HumanGeneId=character())
-human_info <- data.frame(HumanGeneSymbol=character(), HumanGeneName=character())
-for (isoform_id in splicing$isoform_id){ 
-  ## Convert the Isoform code into gene ID of your animal
-  isoform_search <- httr::POST(print(paste0("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=gene&term=",isoform_id)))
-  animal_id <- xml2::xml_find_all(xml2::read_xml(rawToChar(isoform_search$content)), "/eSearchResult/IdList/Id") %>% xml2::xml_text()
-  ## Retrieve organism, gene name and symbol of gene informations from gene summary
-  gene_summary <- httr::POST(print(paste0("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=gene&id=",animal_id)))
-  organism_name <- xml2::xml_find_all(xml2::read_xml(rawToChar(gene_summary$content)), "/eSummaryResult/DocumentSummarySet/DocumentSummary/Organism/ScientificName") %>% xml2::xml_text()
-  gene_name <- xml2::xml_find_all(xml2::read_xml(rawToChar(gene_summary$content)), "/eSummaryResult/DocumentSummarySet/DocumentSummary/Description") %>% xml2::xml_text()
-  gene_symbol <- xml2::xml_find_all(xml2::read_xml(rawToChar(gene_summary$content)), "/eSummaryResult/DocumentSummarySet/DocumentSummary/Name") %>% xml2::xml_text()
-  ## Retrieve corresponding human ID for this gene
-  human_search <- httr::POST(print(paste0("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=gene&term=",gene_symbol,"[Gene]+Homo+sapiens[Organism]")))
-  human_id <- xml2::xml_find_all(xml2::read_xml(rawToChar(human_search$content)), "/eSearchResult/IdList/Id") %>% xml2::xml_text()
-  ## Add new row
-  animal_info <- animal_info %>% add_row(Organism=c(organism_name), 
-                                         AnimalGeneId=c(animal_id), 
-                                         GeneSymbol=c(gene_symbol), 
-                                         GeneName=c(gene_name), 
-                                         HumanGeneId=c(human_id))
-  Sys.sleep(8)
+dRuiD <- function(){
+  animal_info <- data.frame(Organism=character(), AnimalGeneId=character(), GeneSymbol=character(), GeneName=character(), HumanGeneId=character())
+  human_info <- data.frame(HumanGeneSymbol=character(), HumanGeneName=character())
+  progress_bar <- progress::progress_bar$new(format="(:spin) [:bar] :percent",total=nrow(isoformList), clear=FALSE, show_after=0)
+  for (isoform_id in isoformList$isoform_id){ 
+    progress_bar$message("                                       ")
+    progress_bar$message(paste0("Identifying isoform: ",isoform_id))
+    ## Convert the Isoform code into gene ID of your animal
+    isoform_search <- httr::POST(paste0("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=gene&term=",isoform_id))
+    animal_id <- xml2::xml_find_all(xml2::read_xml(rawToChar(isoform_search$content)), "/eSearchResult/IdList/Id") %>% xml2::xml_text()
+    ## Retrieve organism, gene name and symbol of gene informations from gene summary
+    gene_summary <- httr::POST(paste0("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=gene&id=",animal_id))
+    organism_name <- xml2::xml_find_all(xml2::read_xml(rawToChar(gene_summary$content)), "/eSummaryResult/DocumentSummarySet/DocumentSummary/Organism/ScientificName") %>% xml2::xml_text()
+    gene_name <- xml2::xml_find_all(xml2::read_xml(rawToChar(gene_summary$content)), "/eSummaryResult/DocumentSummarySet/DocumentSummary/Description") %>% xml2::xml_text()
+    gene_symbol <- xml2::xml_find_all(xml2::read_xml(rawToChar(gene_summary$content)), "/eSummaryResult/DocumentSummarySet/DocumentSummary/Name") %>% xml2::xml_text()
+    progress_bar$message(paste0("Organism: ", organism_name))
+    progress_bar$message(paste0("Gene: ", gene_symbol))
+    ## Retrieve corresponding human ID for this gene
+    human_search <- httr::POST(paste0("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=gene&term=",gene_symbol,"[Gene]+Homo+sapiens[Organism]"))
+    human_id <- xml2::xml_find_all(xml2::read_xml(rawToChar(human_search$content)), "/eSearchResult/IdList/Id") %>% xml2::xml_text()
+    ## Add new row
+    animal_info <- animal_info %>% add_row(Organism=c(organism_name), 
+                                           AnimalGeneId=c(animal_id), 
+                                           GeneSymbol=c(gene_symbol), 
+                                           GeneName=c(gene_name), 
+                                           HumanGeneId=c(human_id))
+    progress_bar$tick()
+    Sys.sleep(20)
+  }
+  progress_bar <- progress::progress_bar$new(format="(:spin) [:bar] :percent",total=nrow(animal_info), clear=FALSE, show_after=0)
+  for (geneId in animal_info$HumanGeneId){
+    human_summary <- httr::POST(paste0("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=gene&id=",geneId))
+    hu_gene_name <- xml2::xml_find_all(xml2::read_xml(rawToChar(human_summary$content)), "/eSummaryResult/DocumentSummarySet/DocumentSummary/Description") %>% xml2::xml_text()
+    hu_gene_symbol <- xml2::xml_find_all(xml2::read_xml(rawToChar(human_summary$content)), "/eSummaryResult/DocumentSummarySet/DocumentSummary/Name") %>% xml2::xml_text()
+    human_info <- human_info %>% add_row(HumanGeneSymbol=hu_gene_symbol, HumanGeneName=hu_gene_name)
+    progress_bar$message(paste0("Retrieving information about human ortholog for: ", hu_gene_symbol))
+    progress_bar$tick()
+    Sys.sleep(10)
+  }
+  results_table <- animal_info %>% cbind(human_info)
+  return(results_table)
+  invisible()
 }
-for (geneId in animal_info$HumanGeneId){
-  human_summary <- httr::POST(print(paste0("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=gene&id=",geneId)))
-  hu_gene_name <- xml2::xml_find_all(xml2::read_xml(rawToChar(human_summary$content)), "/eSummaryResult/DocumentSummarySet/DocumentSummary/Description") %>% xml2::xml_text()
-  hu_gene_symbol <- xml2::xml_find_all(xml2::read_xml(rawToChar(human_summary$content)), "/eSummaryResult/DocumentSummarySet/DocumentSummary/Name") %>% xml2::xml_text()
-  human_info <- human_info %>% add_row(HumanGeneSymbol=hu_gene_symbol, HumanGeneName=hu_gene_name)
-  Sys.sleep(8)
-}
-results_table <- animal_info %>% cbind(human_info)
+
+results <- dRuiD()
